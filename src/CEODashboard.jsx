@@ -336,31 +336,67 @@ export default function CEODashboard() {
               </div>
             </div>
 
-            {/* DEADLINE TRACKER */}
+            {/* INDIVIDUAL PHARMACY CARDS */}
             <div style={D.card}>
-              <div style={D.cardTitle}>Submission Compliance — Deadline: Monday {DEADLINE_HOUR}:00</div>
-              <div style={D.statusGrid}>
-                {PHARMACIES.map(p => {
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+                <div style={D.cardTitle}>Individual Site Submissions — Deadline: Monday {DEADLINE_HOUR}:00</div>
+                <div style={{ fontSize:11, color:"#94a3b8", fontFamily:"monospace" }}>
+                  {onTimeCount} on time · {overdueCount} overdue · {PHARMACIES.length - submitted} pending
+                </div>
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                {PHARMACIES.map((p, i) => {
                   const r = reports[p];
                   const prev = prevReports[p];
                   const w = r && prev ? arrow(r.total_revenue, prev.total_revenue) : null;
                   const status = getDeadlineStatus(week, r?.submitted_at);
+                  const catBreakdown = SERVICES.reduce((acc, svc) => {
+                    if (!acc[svc.category]) acc[svc.category] = 0;
+                    acc[svc.category] += calcRevenue(svc, r);
+                    return acc;
+                  }, {});
                   return (
-                    <div key={p} style={{ ...D.statusCard, background: status.bg, borderColor: status.color + "55" }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-                        <div style={{ ...D.statusDot, background: status.color }} />
-                        <div style={{ fontSize:10, color:status.color, fontFamily:"monospace", fontWeight:600, padding:"2px 8px", borderRadius:100, border:`1px solid ${status.color}44`, background:`${status.color}15` }}>
+                    <div key={p} style={{ display:"flex", alignItems:"stretch", borderRadius:12, border:`1px solid ${status.color}33`, overflow:"hidden", background:"rgba(255,255,255,0.02)" }}>
+                      <div style={{ width:4, background: status.color, flexShrink:0 }} />
+                      <div style={{ padding:"14px 18px", minWidth:200, borderRight:"1px solid rgba(255,255,255,0.06)", display:"flex", flexDirection:"column", justifyContent:"center" }}>
+                        <div style={{ fontSize:14, fontWeight:700, color:"#f1f5f9", marginBottom:6 }}>{p}</div>
+                        <div style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"3px 10px", borderRadius:100, fontSize:11, fontFamily:"monospace", fontWeight:600, background:`${status.color}18`, color:status.color, border:`1px solid ${status.color}33`, width:"fit-content" }}>
                           {status.icon} {status.label}
                         </div>
+                        {r && <div style={{ fontSize:10, color:"#64748b", fontFamily:"monospace", marginTop:6 }}>
+                          {new Date(r.submitted_at).toLocaleTimeString("en-GB", { hour:"2-digit", minute:"2-digit" })} · {new Date(r.submitted_at).toLocaleDateString("en-GB", { day:"numeric", month:"short" })}
+                        </div>}
                       </div>
-                      <div style={D.statusName}>{p}</div>
-                      <div style={{ ...D.statusRev, color: r ? "#34d399" : "#475569" }}>
-                        {r ? fmt(r.total_revenue) : "Not submitted"}
+                      <div style={{ padding:"14px 18px", minWidth:140, borderRight:"1px solid rgba(255,255,255,0.06)", display:"flex", flexDirection:"column", justifyContent:"center" }}>
+                        <div style={{ fontSize:10, color:"#64748b", fontFamily:"monospace", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>Revenue</div>
+                        <div style={{ fontSize:20, fontWeight:800, color: r ? "#34d399" : "#334155", fontFamily:"monospace" }}>
+                          {r ? fmt(r.total_revenue) : "—"}
+                        </div>
+                        {w && <div style={{ fontSize:11, color:w.color, fontFamily:"monospace", marginTop:4 }}>{w.icon} {w.pct}% vs last wk</div>}
                       </div>
-                      {w && <div style={{ fontSize:11, color:w.color, fontFamily:"monospace", marginTop:4 }}>{w.icon} {w.pct}% vs last wk</div>}
-                      {r && <div style={{ fontSize:10, color:"#334155", fontFamily:"monospace", marginTop:4 }}>
-                        Submitted {new Date(r.submitted_at).toLocaleTimeString("en-GB", { hour:"2-digit", minute:"2-digit" })}
-                      </div>}
+                      <div style={{ padding:"14px 18px", minWidth:100, borderRight:"1px solid rgba(255,255,255,0.06)", display:"flex", flexDirection:"column", justifyContent:"center" }}>
+                        <div style={{ fontSize:10, color:"#64748b", fontFamily:"monospace", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:4 }}>Sessions</div>
+                        <div style={{ fontSize:20, fontWeight:800, color:"#f1f5f9", fontFamily:"monospace" }}>
+                          {r ? r.total_sessions : "—"}
+                        </div>
+                      </div>
+                      <div style={{ padding:"14px 18px", flex:1, display:"flex", flexDirection:"column", justifyContent:"center" }}>
+                        <div style={{ fontSize:10, color:"#64748b", fontFamily:"monospace", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:8 }}>By Category</div>
+                        {r ? (
+                          <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
+                            {Object.entries(catBreakdown).filter(([,v]) => v > 0).map(([cat, val]) => (
+                              <div key={cat} style={{ display:"flex", alignItems:"center", gap:6 }}>
+                                <span style={{ width:8, height:8, borderRadius:"50%", background:CAT_COLORS[cat], display:"inline-block", flexShrink:0 }} />
+                                <span style={{ fontSize:11, color:"#94a3b8" }}>{cat.replace(" Clinical","").replace("Private ","")}</span>
+                                <span style={{ fontSize:12, color:"#f1f5f9", fontFamily:"monospace", fontWeight:600 }}>{fmt(val)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize:12, color:"#334155" }}>Awaiting submission</div>
+                        )}
+                        {r?.notes && <div style={{ marginTop:8, fontSize:11, color:"#94a3b8", fontStyle:"italic", borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:6 }}>📝 {r.notes}</div>}
+                      </div>
                     </div>
                   );
                 })}
