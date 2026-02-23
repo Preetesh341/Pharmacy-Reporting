@@ -1,17 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabase.js";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
+  PieChart, Pie, Cell, LineChart, Line, Legend,
 } from "recharts";
 
 const PHARMACIES = [
-  "Binscombe Pharmacy",
-  "Popley Pharmacy",
-  "Direct Pharmacy",
-  "Dapdune Pharmacy",
-  "Winklebury Pharmacy",
-  "East Wittering Pharmacy",
+  "Binscombe Pharmacy","Popley Pharmacy","Direct Pharmacy",
+  "Dapdune Pharmacy","Winklebury Pharmacy","East Wittering Pharmacy",
 ];
 
 const SERVICES = [
@@ -33,8 +29,10 @@ const SERVICES = [
   { id: "cpcs_mi", label: "CPCS – MI", fee: 17.00, category: "CPCS" },
 ];
 
-const CAT_COLORS = { "NHS Clinical": "#10b981", "Vaccinations": "#3b82f6", "Private Clinics": "#f59e0b", "CPCS": "#8b5cf6" };
+const CAT_COLORS = { "NHS Clinical":"#10b981","Vaccinations":"#3b82f6","Private Clinics":"#f59e0b","CPCS":"#8b5cf6" };
 const PIE_COLORS = ["#10b981","#3b82f6","#f59e0b","#8b5cf6","#ec4899","#06b6d4"];
+const PHARM_COLORS = ["#10b981","#3b82f6","#f59e0b","#8b5cf6","#ec4899","#06b6d4"];
+const DEADLINE_HOUR = 12;
 
 function getWeekLabel() {
   const now = new Date();
@@ -51,11 +49,16 @@ function getWeekOffset(dateStr, offset) {
 
 function fmtDate(dateStr) {
   if (!dateStr) return "";
-  return new Date(dateStr).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return new Date(dateStr).toLocaleDateString("en-GB", { day:"numeric", month:"short", year:"numeric" });
+}
+
+function fmtMonth(dateStr) {
+  if (!dateStr) return "";
+  return new Date(dateStr).toLocaleDateString("en-GB", { month:"short", year:"numeric" });
 }
 
 function fmt(v) {
-  return "£" + Number(v).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return "£" + Number(v).toLocaleString("en-GB", { minimumFractionDigits:2, maximumFractionDigits:2 });
 }
 
 function calcRevenue(svc, data) {
@@ -67,54 +70,115 @@ function calcRevenue(svc, data) {
 function arrow(curr, prev) {
   if (!prev || prev === 0) return null;
   const pct = ((curr - prev) / prev) * 100;
-  if (Math.abs(pct) < 0.5) return { icon: "→", color: "#94a3b8", pct: 0 };
-  return pct > 0 ? { icon: "↑", color: "#34d399", pct: pct.toFixed(1) } : { icon: "↓", color: "#f87171", pct: Math.abs(pct).toFixed(1) };
+  if (Math.abs(pct) < 0.5) return { icon:"→", color:"#94a3b8", pct:0 };
+  return pct > 0 ? { icon:"↑", color:"#34d399", pct:pct.toFixed(1) } : { icon:"↓", color:"#f87171", pct:Math.abs(pct).toFixed(1) };
+}
+
+function deadlineStatus(pharmacy, reports, week) {
+  const isCurrentWeek = week === getWeekLabel();
+  const now = new Date();
+  const weekDate = new Date(week);
+  const deadline = new Date(weekDate);
+  deadline.setHours(DEADLINE_HOUR, 0, 0, 0);
+  const submitted = !!reports[pharmacy];
+
+  if (submitted) return { color:"#34d399", bg:"rgba(16,185,129,0.12)", border:"rgba(16,185,129,0.3)", label:"✓ Submitted", dot:"#34d399" };
+  if (!isCurrentWeek) return { color:"#f87171", bg:"rgba(248,113,113,0.08)", border:"rgba(248,113,113,0.2)", label:"✗ Not submitted", dot:"#f87171" };
+  if (now < deadline) {
+    const hoursLeft = Math.round((deadline - now) / 3600000);
+    return { color:"#f59e0b", bg:"rgba(245,158,11,0.08)", border:"rgba(245,158,11,0.25)", label:`⏱ Due in ${hoursLeft}h`, dot:"#f59e0b" };
+  }
+  return { color:"#f87171", bg:"rgba(248,113,113,0.08)", border:"rgba(248,113,113,0.2)", label:"⚠ Overdue", dot:"#f87171" };
 }
 
 export default function CEODashboard() {
   const [week, setWeek] = useState(getWeekLabel());
   const [reports, setReports] = useState({});
   const [prevReports, setPrevReports] = useState({});
+  const [trendData, setTrendData] = useState([]);
+  const [monthlyData, setMonthlyData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("overview");
   const [emailDraft, setEmailDraft] = useState("");
   const [emailCopied, setEmailCopied] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
+  const [autoEmailSent, setAutoEmailSent] = useState(false);
+  const [ceoEmail, setCeoEmail] = useState("");
+  const [showEmailConfig, setShowEmailConfig] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   useEffect(() => { loadAll(); }, [week]);
+
+  useEffect(() => {
+    const allSubmitted = Object.keys(reports).length === PHARMACIES.length;
+    if (allSubmitted && !autoEmailSent && ceoEmail && week === getWeekLabel()) {
+      generateEmail().then(() => setAutoEmailSent(true));
+    }
+  }, [reports]);
 
   async function loadAll() {
     setLoading(true);
     const prevWeek = getWeekOffset(week, -1);
+    const weekKeys = Array.from({ length: 12 }, (_, i) => getWeekOffset(week, -i));
 
-    const [{ data: currData }, { data: prevData }] = await Promise.all([
+    const [{ data: currData }, { data: prevData }, { data: histData }] = await Promise.all([
       supabase.from("weekly_reports").select("*").eq("week", week),
       supabase.from("weekly_reports").select("*").eq("week", prevWeek),
+      supabase.from("weekly_reports").select("week,total_revenue,total_sessions,pharmacy").in("week", weekKeys),
     ]);
 
-    const curr = {};
-    const prev = {};
+    const curr = {}, prev = {};
     (currData || []).forEach(r => { curr[r.pharmacy] = r; });
     (prevData || []).forEach(r => { prev[r.pharmacy] = r; });
-
     setReports(curr);
     setPrevReports(prev);
+
+    const weeklyTotals = {};
+    (histData || []).forEach(r => {
+      if (!weeklyTotals[r.week]) weeklyTotals[r.week] = { week:r.week, revenue:0, sessions:0, byPharmacy:{} };
+      weeklyTotals[r.week].revenue += r.total_revenue || 0;
+      weeklyTotals[r.week].sessions += r.total_sessions || 0;
+      weeklyTotals[r.week].byPharmacy[r.pharmacy] = r.total_revenue || 0;
+    });
+
+    const trend = weekKeys.map(w => ({
+      week: w, label: fmtDate(w),
+      revenue: weeklyTotals[w]?.revenue || 0,
+      sessions: weeklyTotals[w]?.sessions || 0,
+      ...PHARMACIES.reduce((a,p) => ({ ...a, [p.replace(" Pharmacy","")]: weeklyTotals[w]?.byPharmacy?.[p] || 0 }), {})
+    })).reverse();
+    setTrendData(trend);
+
+    const monthlyTotals = {};
+    (histData || []).forEach(r => {
+      const d = new Date(r.week);
+      const mKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+      if (!monthlyTotals[mKey]) monthlyTotals[mKey] = { month:mKey, label:fmtMonth(r.week), revenue:0, sessions:0 };
+      monthlyTotals[mKey].revenue += r.total_revenue || 0;
+      monthlyTotals[mKey].sessions += r.total_sessions || 0;
+    });
+    setMonthlyData(Object.values(monthlyTotals).sort((a,b) => a.month.localeCompare(b.month)));
+
     setLoading(false);
   }
 
   const submitted = Object.keys(reports).length;
-  const totalRev = Object.values(reports).reduce((s, r) => s + (r.total_revenue || 0), 0);
-  const prevTotalRev = Object.values(prevReports).reduce((s, r) => s + (r.total_revenue || 0), 0);
-  const totalSessions = Object.values(reports).reduce((s, r) => s + (r.total_sessions || 0), 0);
-  const prevTotalSessions = Object.values(prevReports).reduce((s, r) => s + (r.total_sessions || 0), 0);
+  const totalRev = Object.values(reports).reduce((s,r) => s+(r.total_revenue||0), 0);
+  const prevTotalRev = Object.values(prevReports).reduce((s,r) => s+(r.total_revenue||0), 0);
+  const totalSessions = Object.values(reports).reduce((s,r) => s+(r.total_sessions||0), 0);
+  const prevTotalSessions = Object.values(prevReports).reduce((s,r) => s+(r.total_sessions||0), 0);
   const wow = arrow(totalRev, prevTotalRev);
   const wowSess = arrow(totalSessions, prevTotalSessions);
+  const allSubmitted = submitted === PHARMACIES.length;
+  const isCurrentWeek = week === getWeekLabel();
+
+  const overdueCount = PHARMACIES.filter(p => deadlineStatus(p, reports, week).label.includes("Overdue")).length;
+  const pendingCount = PHARMACIES.filter(p => !reports[p]).length;
 
   const pharmChartData = PHARMACIES.map(p => ({
-    name: p.replace(" Pharmacy", ""),
+    name: p.replace(" Pharmacy",""),
     revenue: reports[p]?.total_revenue || 0,
     prevRevenue: prevReports[p]?.total_revenue || 0,
-    submitted: !!reports[p],
   }));
 
   const catData = {};
@@ -127,43 +191,60 @@ export default function CEODashboard() {
   const catPie = Object.entries(catData).map(([name, value]) => ({ name, value }));
 
   const svcTotals = SERVICES.map(svc => {
-    let count = 0, rev = 0, prevRev = 0;
+    let count=0, rev=0, prevRev=0;
     PHARMACIES.forEach(p => {
-      if (reports[p]) { count += (reports[p].counts?.[svc.id] || 0); rev += calcRevenue(svc, reports[p]); }
+      if (reports[p]) { count += (reports[p].counts?.[svc.id]||0); rev += calcRevenue(svc, reports[p]); }
       if (prevReports[p]) prevRev += calcRevenue(svc, prevReports[p]);
     });
     return { ...svc, count, rev, prevRev };
-  }).sort((a, b) => b.rev - a.rev);
+  }).sort((a,b) => b.rev - a.rev);
+
+  async function exportPDF() {
+    setPdfLoading(true);
+    window.print();
+    setPdfLoading(false);
+  }
 
   async function generateEmail() {
     setEmailLoading(true);
+    const prevMonthRev = monthlyData.length >= 2 ? monthlyData[monthlyData.length-2]?.revenue : null;
+    const currMonthRev = monthlyData.length >= 1 ? monthlyData[monthlyData.length-1]?.revenue : null;
+    const momChange = prevMonthRev && currMonthRev ? (((currMonthRev-prevMonthRev)/prevMonthRev)*100).toFixed(1) : null;
+
     const summaryData = {
       week: fmtDate(week),
       totalRevenue: fmt(totalRev),
       wowChange: wow ? `${wow.icon} ${wow.pct}% vs prior week` : "No prior week data",
+      momChange: momChange ? `${Number(momChange)>0?"+":""}${momChange}% vs prior month` : null,
       submitted: `${submitted}/${PHARMACIES.length}`,
-      pharmacies: PHARMACIES.map(p => ({ name: p, revenue: reports[p] ? fmt(reports[p].total_revenue) : "Not submitted", submitted: !!reports[p] })),
-      topServices: svcTotals.slice(0, 5).map(s => ({ name: s.label, revenue: fmt(s.rev), count: s.count })),
+      allSubmitted,
+      pharmacies: PHARMACIES.map(p => {
+        const ds = deadlineStatus(p, reports, week);
+        return { name:p, revenue:reports[p]?fmt(reports[p].total_revenue):"Not submitted", status:ds.label };
+      }),
+      topServices: svcTotals.slice(0,5).map(s => ({ name:s.label, revenue:fmt(s.rev), count:s.count })),
     };
+
     const prompt = `You are a pharmacy group operations analyst. Write a professional, concise weekly performance summary email to the CEO of a UK independent pharmacy chain.
 Use this data: ${JSON.stringify(summaryData, null, 2)}
-The email should: open with a warm professional greeting, lead with headline numbers, call out top-performing site, note any sites that haven't submitted, highlight top 2-3 services, end positively. Use British English. Under 300 words. Plain text, no markdown. Sign off as "Operations Team".`;
+The email should: open with a warm professional greeting, lead with headline revenue and week-on-week change, mention month-on-month trend if available, call out top-performing site, note any sites that are overdue or haven't submitted, highlight top 2-3 services by revenue, end positively. Use British English. Under 350 words. Plain text, no markdown. Sign off as "Operations Team".`;
+
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, messages: [{ role: "user", content: prompt }] }),
+        body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, messages:[{ role:"user", content:prompt }] }),
       });
       const data = await res.json();
-      setEmailDraft(data.content?.map(b => b.text || "").join("") || "Could not generate email.");
+      setEmailDraft(data.content?.map(b => b.text||"").join("") || "Could not generate email.");
     } catch { setEmailDraft("Error generating email. Please try again."); }
     setEmailLoading(false);
   }
 
-  function copyEmail() { navigator.clipboard.writeText(emailDraft); setEmailCopied(true); setTimeout(() => setEmailCopied(false), 2500); }
-  function openMailto() { window.open(`mailto:?subject=${encodeURIComponent(`Pharmacy Group — Weekly Report w/c ${fmtDate(week)}`)}&body=${encodeURIComponent(emailDraft)}`); }
+  function copyEmail() { navigator.clipboard.writeText(emailDraft); setEmailCopied(true); setTimeout(()=>setEmailCopied(false),2500); }
+  function openMailto() { window.open(`mailto:${ceoEmail}?subject=${encodeURIComponent(`Pharmacy Group — Weekly Report w/c ${fmtDate(week)}`)}&body=${encodeURIComponent(emailDraft)}`); }
 
-  const TABS = ["overview","services","pharmacies","submissions","email"];
+  const TABS = ["overview","trends","services","pharmacies","submissions","email"];
 
   return (
     <div style={D.page}>
@@ -173,29 +254,39 @@ The email should: open with a warm professional greeting, lead with headline num
           <h1 style={D.title}>Weekly Performance <span style={D.green}>Report</span></h1>
         </div>
         <div style={D.headerRight}>
+          {isCurrentWeek && !allSubmitted && (
+            <div style={{ padding:"8px 14px", borderRadius:8, background:overdueCount>0?"rgba(248,113,113,0.1)":"rgba(245,158,11,0.1)", border:`1px solid ${overdueCount>0?"rgba(248,113,113,0.3)":"rgba(245,158,11,0.3)"}`, color:overdueCount>0?"#f87171":"#f59e0b", fontSize:12, fontFamily:"monospace" }}>
+              {overdueCount>0?`⚠ ${overdueCount} site${overdueCount>1?"s":""} overdue`:`⏱ ${pendingCount} pending — deadline 12pm`}
+            </div>
+          )}
+          {allSubmitted && isCurrentWeek && (
+            <div style={{ padding:"8px 14px", borderRadius:8, background:"rgba(16,185,129,0.1)", border:"1px solid rgba(16,185,129,0.3)", color:"#34d399", fontSize:12, fontFamily:"monospace" }}>✓ All sites submitted</div>
+          )}
           <div style={D.weekNav}>
-            <button style={D.navBtn} onClick={() => setWeek(w => getWeekOffset(w, -1))}>←</button>
+            <button style={D.navBtn} onClick={() => setWeek(w => getWeekOffset(w,-1))}>←</button>
             <div style={D.weekBox}>
               <div style={D.weekText}>w/c {fmtDate(week)}</div>
               <input type="date" value={week} onChange={e => setWeek(e.target.value)} style={D.weekPicker} />
             </div>
-            <button style={D.navBtn} onClick={() => setWeek(w => getWeekOffset(w, 1))}>→</button>
+            <button style={D.navBtn} onClick={() => setWeek(w => getWeekOffset(w,1))}>→</button>
           </div>
           <button onClick={loadAll} style={D.refreshBtn}>↺ Refresh</button>
+          <button onClick={exportPDF} style={D.pdfBtn} disabled={pdfLoading}>{pdfLoading?"Printing...":"⬇ Export PDF"}</button>
         </div>
       </div>
 
       <div style={D.kpiStrip}>
         {[
-          { label: "Total Revenue", value: fmt(totalRev), wow, sub: `${submitted}/${PHARMACIES.length} sites submitted` },
-          { label: "Total Sessions", value: totalSessions, wow: wowSess, sub: "across all sites" },
-          { label: "Avg per Site", value: submitted > 0 ? fmt(totalRev / submitted) : "£0.00", sub: "submitted sites only" },
-          { label: "Top Site", value: [...pharmChartData].sort((a,b)=>b.revenue-a.revenue)[0]?.name || "—", color: "#a78bfa", sub: fmt([...pharmChartData].sort((a,b)=>b.revenue-a.revenue)[0]?.revenue || 0) },
-          { label: "Submission Rate", value: `${Math.round((submitted/PHARMACIES.length)*100)}%`, color: submitted===PHARMACIES.length?"#34d399":"#f59e0b", sub: `${PHARMACIES.length-submitted} pending` },
-        ].map((k, i) => (
+          { label:"Total Revenue", value:fmt(totalRev), wow, sub:`${submitted}/${PHARMACIES.length} sites submitted` },
+          { label:"Total Sessions", value:totalSessions, wow:wowSess, sub:"across all sites" },
+          { label:"Avg per Site", value:submitted>0?fmt(totalRev/submitted):"£0.00", sub:"submitted sites only" },
+          { label:"Top Site", value:[...pharmChartData].sort((a,b)=>b.revenue-a.revenue)[0]?.name||"—", color:"#a78bfa", sub:fmt([...pharmChartData].sort((a,b)=>b.revenue-a.revenue)[0]?.revenue||0) },
+          { label:"Submission Rate", value:`${Math.round((submitted/PHARMACIES.length)*100)}%`, color:allSubmitted?"#34d399":overdueCount>0?"#f87171":"#f59e0b", sub:allSubmitted?"All on time":overdueCount>0?`${overdueCount} overdue`:`${pendingCount} pending` },
+          { label:"Month to Date", value:fmt(monthlyData[monthlyData.length-1]?.revenue||0), sub:monthlyData.length>=2?`vs ${fmt(monthlyData[monthlyData.length-2]?.revenue||0)} last month`:"building data...", wow:monthlyData.length>=2?arrow(monthlyData[monthlyData.length-1]?.revenue,monthlyData[monthlyData.length-2]?.revenue):null },
+        ].map((k,i) => (
           <div key={i} style={D.kpi}>
-            <div style={{ ...D.kpiVal, ...(k.color ? { color: k.color } : {}) }}>{k.value}</div>
-            {k.wow && <div style={{ color: k.wow.color, fontSize: 11, fontFamily: "monospace", marginBottom: 2 }}>{k.wow.icon} {k.wow.pct}% week-on-week</div>}
+            <div style={{ ...D.kpiVal, ...(k.color?{color:k.color}:{}) }}>{k.value}</div>
+            {k.wow && <div style={{ color:k.wow.color, fontSize:11, fontFamily:"monospace", marginBottom:2 }}>{k.wow.icon} {k.wow.pct}% {i===5?"vs last month":"week-on-week"}</div>}
             <div style={D.kpiSub}>{k.sub}</div>
             <div style={D.kpiLabel}>{k.label}</div>
           </div>
@@ -204,8 +295,8 @@ The email should: open with a warm professional greeting, lead with headline num
 
       <div style={D.tabRow}>
         {TABS.map(t => (
-          <button key={t} style={{ ...D.tab, ...(tab===t?D.tabOn:{}) }} onClick={() => setTab(t)}>
-            {t === "email" ? "✉ Email CEO" : t.charAt(0).toUpperCase()+t.slice(1)}
+          <button key={t} style={{ ...D.tab, ...(tab===t?D.tabOn:{}) }} onClick={()=>setTab(t)}>
+            {t==="email"?"✉ Email CEO":t==="trends"?"📈 Trends":t.charAt(0).toUpperCase()+t.slice(1)}
           </button>
         ))}
       </div>
@@ -213,7 +304,8 @@ The email should: open with a warm professional greeting, lead with headline num
       <div style={D.content}>
         {loading && <div style={D.loading}>Loading reports for {fmtDate(week)}...</div>}
 
-        {!loading && tab === "overview" && (
+        {/* OVERVIEW */}
+        {!loading && tab==="overview" && (
           <div>
             <div style={D.row2}>
               <div style={D.card}>
@@ -221,10 +313,10 @@ The email should: open with a warm professional greeting, lead with headline num
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={pharmChartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="name" tick={{ fill: "#64748b", fontSize: 10 }} />
-                    <YAxis tick={{ fill: "#64748b", fontSize: 10 }} tickFormatter={v => "£"+(v/1000).toFixed(1)+"k"} />
+                    <XAxis dataKey="name" tick={{ fill:"#64748b", fontSize:10 }} />
+                    <YAxis tick={{ fill:"#64748b", fontSize:10 }} tickFormatter={v=>"£"+(v/1000).toFixed(1)+"k"} />
                     <Tooltip formatter={v=>[fmt(v)]} contentStyle={D.tooltip} />
-                    <Legend wrapperStyle={{ fontSize: 11, color: "#64748b" }} />
+                    <Legend wrapperStyle={{ fontSize:11, color:"#64748b" }} />
                     <Bar dataKey="revenue" name="This week" fill="#10b981" radius={[3,3,0,0]} barSize={18} />
                     <Bar dataKey="prevRevenue" name="Prior week" fill="rgba(255,255,255,0.12)" radius={[3,3,0,0]} barSize={18} />
                   </BarChart>
@@ -243,7 +335,7 @@ The email should: open with a warm professional greeting, lead with headline num
                 <div style={D.legend}>
                   {catPie.map((e,i) => (
                     <div key={i} style={D.legendRow}>
-                      <span style={{ ...D.dot, background: CAT_COLORS[e.name]||PIE_COLORS[i] }} />
+                      <span style={{ ...D.dot, background:CAT_COLORS[e.name]||PIE_COLORS[i] }} />
                       <span style={D.legendName}>{e.name}</span>
                       <span style={D.legendVal}>{fmt(e.value)}</span>
                     </div>
@@ -252,17 +344,22 @@ The email should: open with a warm professional greeting, lead with headline num
               </div>
             </div>
             <div style={D.card}>
-              <div style={D.cardTitle}>Site Submission Status</div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+                <div style={D.cardTitle}>Site Submission Status</div>
+                {isCurrentWeek && <div style={{ fontSize:11, color:"#475569", fontFamily:"monospace" }}>Deadline: Monday 12:00pm</div>}
+              </div>
               <div style={D.statusGrid}>
                 {PHARMACIES.map(p => {
                   const r = reports[p]; const prev = prevReports[p];
                   const w = r && prev ? arrow(r.total_revenue, prev.total_revenue) : null;
+                  const ds = deadlineStatus(p, reports, week);
                   return (
-                    <div key={p} style={{ ...D.statusCard, ...(r?D.statusOn:D.statusOff) }}>
-                      <div style={{ ...D.statusDot, background: r?"#10b981":"#334155" }} />
+                    <div key={p} style={{ ...D.statusCard, background:ds.bg, borderColor:ds.border }}>
+                      <div style={{ ...D.statusDot, background:ds.dot }} />
                       <div style={D.statusName}>{p}</div>
-                      <div style={D.statusRev}>{r ? fmt(r.total_revenue) : "Not submitted"}</div>
-                      {w && <div style={{ fontSize: 11, color: w.color, fontFamily: "monospace", marginTop: 2 }}>{w.icon} {w.pct}% vs last wk</div>}
+                      <div style={{ ...D.statusRev, color:r?"#34d399":"#475569" }}>{r?fmt(r.total_revenue):"—"}</div>
+                      <div style={{ fontSize:11, color:ds.color, fontFamily:"monospace", marginTop:4, fontWeight:600 }}>{ds.label}</div>
+                      {w && <div style={{ fontSize:10, color:w.color, fontFamily:"monospace", marginTop:2 }}>{w.icon} {w.pct}% vs last wk</div>}
                     </div>
                   );
                 })}
@@ -271,10 +368,75 @@ The email should: open with a warm professional greeting, lead with headline num
           </div>
         )}
 
-        {!loading && tab === "services" && (
+        {/* TRENDS */}
+        {!loading && tab==="trends" && (
+          <div>
+            <div style={D.card}>
+              <div style={D.cardTitle}>12-Week Revenue Trend — Group Total</div>
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={trendData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <XAxis dataKey="label" tick={{ fill:"#64748b", fontSize:9 }} interval={1} />
+                  <YAxis tick={{ fill:"#64748b", fontSize:10 }} tickFormatter={v=>"£"+(v/1000).toFixed(1)+"k"} />
+                  <Tooltip formatter={v=>[fmt(v)]} contentStyle={D.tooltip} />
+                  <Line type="monotone" dataKey="revenue" name="Group Revenue" stroke="#10b981" strokeWidth={2.5} dot={{ fill:"#10b981", r:4 }} activeDot={{ r:6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={D.card}>
+              <div style={D.cardTitle}>12-Week Revenue by Site</div>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={trendData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <XAxis dataKey="label" tick={{ fill:"#64748b", fontSize:9 }} interval={1} />
+                  <YAxis tick={{ fill:"#64748b", fontSize:10 }} tickFormatter={v=>"£"+(v/1000).toFixed(1)+"k"} />
+                  <Tooltip formatter={v=>[fmt(v)]} contentStyle={D.tooltip} />
+                  <Legend wrapperStyle={{ fontSize:11, color:"#64748b" }} />
+                  {PHARMACIES.map((p,i) => (
+                    <Line key={p} type="monotone" dataKey={p.replace(" Pharmacy","")} stroke={PHARM_COLORS[i]} strokeWidth={1.5} dot={false} />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={D.card}>
+              <div style={D.cardTitle}>Monthly Revenue Comparison</div>
+              {monthlyData.length < 2 ? (
+                <div style={{ color:"#475569", fontSize:13, padding:"20px 0" }}>Monthly comparison will appear once you have data across multiple months.</div>
+              ) : (
+                <>
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={monthlyData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                      <XAxis dataKey="label" tick={{ fill:"#64748b", fontSize:11 }} />
+                      <YAxis tick={{ fill:"#64748b", fontSize:10 }} tickFormatter={v=>"£"+(v/1000).toFixed(1)+"k"} />
+                      <Tooltip formatter={v=>[fmt(v)]} contentStyle={D.tooltip} />
+                      <Bar dataKey="revenue" name="Monthly Revenue" fill="#3b82f6" radius={[4,4,0,0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div style={{ display:"flex", gap:12, marginTop:16, flexWrap:"wrap" }}>
+                    {monthlyData.slice(-3).map((m,i,arr) => {
+                      const prev = arr[i-1];
+                      const w = prev ? arrow(m.revenue, prev.revenue) : null;
+                      return (
+                        <div key={m.month} style={{ flex:1, minWidth:120, padding:"14px 16px", background:"rgba(255,255,255,0.02)", borderRadius:10, border:"1px solid rgba(255,255,255,0.06)" }}>
+                          <div style={{ fontSize:11, color:"#64748b", fontFamily:"monospace", marginBottom:6 }}>{m.label}</div>
+                          <div style={{ fontSize:18, fontWeight:700, color:"#f1f5f9", fontFamily:"monospace" }}>{fmt(m.revenue)}</div>
+                          {w && <div style={{ fontSize:11, color:w.color, fontFamily:"monospace", marginTop:4 }}>{w.icon} {w.pct}% vs prior month</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* SERVICES */}
+        {!loading && tab==="services" && (
           <div style={D.card}>
             <div style={D.cardTitle}>Group Service Breakdown</div>
-            <div style={{ overflowX: "auto" }}>
+            <div style={{ overflowX:"auto" }}>
               <table style={D.table}>
                 <thead><tr>
                   <th style={D.th}>Service</th><th style={D.th}>Category</th>
@@ -287,7 +449,7 @@ The email should: open with a warm professional greeting, lead with headline num
                   {svcTotals.map((svc,i) => {
                     const w = arrow(svc.rev, svc.prevRev);
                     return (
-                      <tr key={svc.id} style={{ background: i%2===0?"transparent":"rgba(255,255,255,0.015)" }}>
+                      <tr key={svc.id} style={{ background:i%2===0?"transparent":"rgba(255,255,255,0.015)" }}>
                         <td style={D.td}>{svc.label}</td>
                         <td style={D.td}><span style={{ ...D.badge, background:(CAT_COLORS[svc.category]||"#64748b")+"22", color:CAT_COLORS[svc.category]||"#94a3b8" }}>{svc.category}</span></td>
                         <td style={{ ...D.td, textAlign:"right", fontFamily:"monospace", color:"#64748b" }}>{svc.fee!=null?fmt(svc.fee):"Var."}</td>
@@ -309,7 +471,8 @@ The email should: open with a warm professional greeting, lead with headline num
           </div>
         )}
 
-        {!loading && tab === "pharmacies" && (
+        {/* PHARMACIES */}
+        {!loading && tab==="pharmacies" && (
           <div style={D.card}>
             <div style={D.cardTitle}>Site × Service Matrix</div>
             <div style={{ overflowX:"auto" }}>
@@ -321,7 +484,7 @@ The email should: open with a warm professional greeting, lead with headline num
                 </tr></thead>
                 <tbody>
                   {SERVICES.map((svc,i) => (
-                    <tr key={svc.id} style={{ background: i%2===0?"transparent":"rgba(255,255,255,0.015)" }}>
+                    <tr key={svc.id} style={{ background:i%2===0?"transparent":"rgba(255,255,255,0.015)" }}>
                       <td style={{ ...D.td, fontSize:12 }}>{svc.label}</td>
                       {PHARMACIES.map(p => {
                         const rev = calcRevenue(svc, reports[p]);
@@ -348,50 +511,86 @@ The email should: open with a warm professional greeting, lead with headline num
           </div>
         )}
 
-        {!loading && tab === "submissions" && PHARMACIES.map(p => {
-          const r = reports[p]; const prev = prevReports[p];
-          const w = r && prev ? arrow(r.total_revenue, prev.total_revenue) : null;
-          return (
-            <div key={p} style={{ ...D.card, marginBottom:12 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12 }}>
-                <div>
-                  <div style={{ fontSize:16, fontWeight:600, color:"#f1f5f9", marginBottom:4 }}>{p}</div>
-                  {r && <div style={{ fontSize:11, color:"#475569", fontFamily:"monospace" }}>Submitted {new Date(r.submitted_at).toLocaleString("en-GB")}</div>}
-                </div>
-                <div style={{ textAlign:"right" }}>
-                  <div style={{ display:"inline-block", padding:"3px 12px", borderRadius:100, fontSize:12, fontFamily:"monospace", ...(r?{background:"rgba(16,185,129,0.12)",color:"#34d399"}:{background:"rgba(255,255,255,0.04)",color:"#475569"}) }}>
-                    {r?"✓ Submitted":"○ Pending"}
+        {/* SUBMISSIONS */}
+        {!loading && tab==="submissions" && (
+          <div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:12 }}>
+              <div style={{ fontSize:13, color:"#64748b" }}>{submitted}/{PHARMACIES.length} submitted · deadline Monday 12:00pm</div>
+              <div style={{ display:"flex", gap:12, fontSize:11, fontFamily:"monospace" }}>
+                <span style={{ color:"#34d399" }}>● Submitted</span>
+                <span style={{ color:"#f59e0b" }}>● Pending</span>
+                <span style={{ color:"#f87171" }}>● Overdue</span>
+              </div>
+            </div>
+            {PHARMACIES.map(p => {
+              const r = reports[p]; const prev = prevReports[p];
+              const w = r && prev ? arrow(r.total_revenue, prev.total_revenue) : null;
+              const ds = deadlineStatus(p, reports, week);
+              return (
+                <div key={p} style={{ ...D.card, marginBottom:12, borderColor:ds.border }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12 }}>
+                    <div>
+                      <div style={{ fontSize:16, fontWeight:600, color:"#f1f5f9", marginBottom:4 }}>{p}</div>
+                      {r && <div style={{ fontSize:11, color:"#475569", fontFamily:"monospace" }}>Submitted {new Date(r.submitted_at).toLocaleString("en-GB")}</div>}
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ display:"inline-block", padding:"4px 14px", borderRadius:100, fontSize:12, fontFamily:"monospace", fontWeight:600, background:ds.bg, color:ds.color, border:`1px solid ${ds.border}` }}>{ds.label}</div>
+                      {r && <div style={{ marginTop:6 }}>
+                        <span style={{ color:"#34d399", fontFamily:"monospace", fontWeight:700, fontSize:18 }}>{fmt(r.total_revenue)}</span>
+                        {w && <span style={{ marginLeft:10, color:w.color, fontSize:12, fontFamily:"monospace" }}>{w.icon} {w.pct}%</span>}
+                      </div>}
+                    </div>
                   </div>
-                  {r && <div style={{ marginTop:6 }}>
-                    <span style={{ color:"#34d399", fontFamily:"monospace", fontWeight:700, fontSize:18 }}>{fmt(r.total_revenue)}</span>
-                    {w && <span style={{ marginLeft:10, color:w.color, fontSize:12, fontFamily:"monospace" }}>{w.icon} {w.pct}%</span>}
-                  </div>}
+                  {r?.notes && <div style={{ marginTop:12, padding:"10px 14px", background:"rgba(255,255,255,0.02)", borderRadius:8, fontSize:13, color:"#94a3b8", borderLeft:"3px solid rgba(255,255,255,0.08)" }}>{r.notes}</div>}
+                  {!r && <div style={{ color:"#475569", fontSize:13, marginTop:12 }}>No report submitted yet.</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* EMAIL */}
+        {!loading && tab==="email" && (
+          <div style={D.card}>
+            <div style={D.cardTitle}>CEO Summary Email</div>
+
+            <div style={{ marginBottom:20, padding:"14px 18px", background:"rgba(255,255,255,0.02)", borderRadius:10, border:"1px solid rgba(255,255,255,0.07)" }}>
+              <div style={{ fontSize:12, color:"#64748b", fontFamily:"monospace", marginBottom:10 }}>AUTO-SEND CONFIGURATION</div>
+              <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                <span style={{ fontSize:12, color:"#64748b", minWidth:80 }}>CEO Email:</span>
+                {showEmailConfig ? (
+                  <div style={{ display:"flex", gap:8, flex:1 }}>
+                    <input value={ceoEmail} onChange={e=>setCeoEmail(e.target.value)} placeholder="ceo@yourgroup.co.uk" style={{ flex:1, padding:"8px 12px", borderRadius:8, border:"1px solid rgba(255,255,255,0.1)", background:"rgba(255,255,255,0.05)", color:"#f1f5f9", fontSize:13, outline:"none" }} />
+                    <button onClick={()=>setShowEmailConfig(false)} style={{ padding:"8px 14px", borderRadius:8, border:"none", background:"#10b981", color:"#fff", fontSize:13, cursor:"pointer" }}>Save</button>
+                  </div>
+                ) : (
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <span style={{ color:ceoEmail?"#94a3b8":"#475569", fontSize:13, fontFamily:"monospace" }}>{ceoEmail||"Not set — click Edit to add"}</span>
+                    <button onClick={()=>setShowEmailConfig(true)} style={{ padding:"4px 10px", borderRadius:6, border:"1px solid rgba(255,255,255,0.1)", background:"transparent", color:"#64748b", fontSize:11, cursor:"pointer" }}>Edit</button>
+                  </div>
+                )}
+              </div>
+              {ceoEmail && <div style={{ fontSize:11, color:"#475569", marginTop:8, fontFamily:"monospace" }}>✓ Email will auto-generate when all 6 sites have submitted</div>}
+              {allSubmitted && autoEmailSent && <div style={{ fontSize:12, color:"#34d399", fontFamily:"monospace", marginTop:6 }}>✓ Auto-email generated — all sites submitted this week</div>}
+            </div>
+
+            <div style={{ background:"rgba(255,255,255,0.02)", borderRadius:10, padding:"14px 18px", marginBottom:20, border:"1px solid rgba(255,255,255,0.07)" }}>
+              <div style={{ display:"flex", gap:12, marginBottom:6, fontSize:13 }}><span style={{ color:"#475569", fontFamily:"monospace", fontSize:11, minWidth:60 }}>To:</span><span style={{ color:"#94a3b8" }}>{ceoEmail||"(set above)"}</span></div>
+              <div style={{ display:"flex", gap:12, marginBottom:6, fontSize:13 }}><span style={{ color:"#475569", fontFamily:"monospace", fontSize:11, minWidth:60 }}>Subject:</span><span style={{ color:"#94a3b8" }}>Pharmacy Group — Weekly Performance Report w/c {fmtDate(week)}</span></div>
+              <div style={{ display:"flex", gap:12, fontSize:13 }}><span style={{ color:"#475569", fontFamily:"monospace", fontSize:11, minWidth:60 }}>Data:</span><span style={{ color:"#94a3b8" }}>{submitted}/{PHARMACIES.length} sites · {fmt(totalRev)} · {totalSessions} sessions{monthlyData.length>=2?` · MTD ${fmt(monthlyData[monthlyData.length-1]?.revenue||0)}`:""}</span></div>
+            </div>
+
+            {!emailDraft && <button style={D.genBtn} onClick={generateEmail} disabled={emailLoading}>{emailLoading?"✨ Generating...":"✨ Generate Email with AI"}</button>}
+            {emailDraft && (
+              <div>
+                <textarea value={emailDraft} onChange={e=>setEmailDraft(e.target.value)} style={{ width:"100%", padding:"16px", borderRadius:10, border:"1px solid rgba(255,255,255,0.1)", background:"rgba(255,255,255,0.04)", color:"#e2e8f0", fontSize:14, fontFamily:"Georgia,serif", lineHeight:1.7, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:14 }} rows={18} />
+                <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+                  <button style={D.genBtn} onClick={generateEmail} disabled={emailLoading}>{emailLoading?"Regenerating...":"↺ Regenerate"}</button>
+                  <button style={{ padding:"11px 22px", borderRadius:10, border:"1px solid rgba(255,255,255,0.12)", background:"transparent", color:"#94a3b8", fontSize:14, cursor:"pointer" }} onClick={copyEmail}>{emailCopied?"✓ Copied!":"Copy Text"}</button>
+                  <button style={{ padding:"11px 22px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#10b981,#059669)", color:"#fff", fontSize:14, fontWeight:600, cursor:"pointer" }} onClick={openMailto}>Open in Mail App →</button>
                 </div>
               </div>
-              {r?.notes && <div style={{ marginTop:12, padding:"10px 14px", background:"rgba(255,255,255,0.02)", borderRadius:8, fontSize:13, color:"#94a3b8", borderLeft:"3px solid rgba(255,255,255,0.08)" }}>{r.notes}</div>}
-              {!r && <div style={{ color:"#334155", fontSize:13, marginTop:12 }}>No report submitted for this week yet.</div>}
-            </div>
-          );
-        })}
-
-        {!loading && tab === "email" && (
-          <div style={D.card}>
-            <div style={D.cardTitle}>AI-Generated CEO Summary Email</div>
-            <p style={{ color:"#64748b", fontSize:13, marginBottom:20, lineHeight:1.6 }}>Generate a professional summary email based on this week's data, then copy or open directly in your mail app.</p>
-            <div style={{ background:"rgba(255,255,255,0.02)", borderRadius:10, padding:"14px 18px", marginBottom:20, border:"1px solid rgba(255,255,255,0.07)" }}>
-              <div style={{ display:"flex", gap:12, marginBottom:6, fontSize:13 }}><span style={{ color:"#475569", fontFamily:"monospace", fontSize:11, minWidth:60 }}>To:</span><span style={{ color:"#94a3b8" }}>CEO</span></div>
-              <div style={{ display:"flex", gap:12, marginBottom:6, fontSize:13 }}><span style={{ color:"#475569", fontFamily:"monospace", fontSize:11, minWidth:60 }}>Subject:</span><span style={{ color:"#94a3b8" }}>Pharmacy Group — Weekly Performance Report w/c {fmtDate(week)}</span></div>
-              <div style={{ display:"flex", gap:12, fontSize:13 }}><span style={{ color:"#475569", fontFamily:"monospace", fontSize:11, minWidth:60 }}>Data:</span><span style={{ color:"#94a3b8" }}>{submitted}/{PHARMACIES.length} sites · {fmt(totalRev)} total · {totalSessions} sessions</span></div>
-            </div>
-            {!emailDraft && <button style={D.genBtn} onClick={generateEmail} disabled={emailLoading}>{emailLoading?"✨ Generating...":"✨ Generate Email with AI"}</button>}
-            {emailDraft && <div>
-              <textarea value={emailDraft} onChange={e=>setEmailDraft(e.target.value)} style={{ width:"100%", padding:"16px", borderRadius:10, border:"1px solid rgba(255,255,255,0.1)", background:"rgba(255,255,255,0.04)", color:"#e2e8f0", fontSize:14, fontFamily:"Georgia,serif", lineHeight:1.7, outline:"none", resize:"vertical", boxSizing:"border-box", marginBottom:14 }} rows={18} />
-              <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-                <button style={D.genBtn} onClick={generateEmail} disabled={emailLoading}>{emailLoading?"Regenerating...":"↺ Regenerate"}</button>
-                <button style={{ padding:"11px 22px", borderRadius:10, border:"1px solid rgba(255,255,255,0.12)", background:"transparent", color:"#94a3b8", fontSize:14, cursor:"pointer" }} onClick={copyEmail}>{emailCopied?"✓ Copied!":"Copy Text"}</button>
-                <button style={{ padding:"11px 22px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#10b981,#059669)", color:"#fff", fontSize:14, fontWeight:600, cursor:"pointer" }} onClick={openMailto}>Open in Mail App →</button>
-              </div>
-            </div>}
+            )}
           </div>
         )}
       </div>
@@ -412,15 +611,16 @@ const D = {
   weekText: { fontSize:13, color:"#f1f5f9", fontFamily:"monospace", whiteSpace:"nowrap" },
   weekPicker: { position:"absolute", inset:0, opacity:0, cursor:"pointer", width:"100%" },
   refreshBtn: { padding:"8px 16px", borderRadius:8, border:"1px solid rgba(16,185,129,0.25)", background:"rgba(16,185,129,0.08)", color:"#34d399", fontSize:13, cursor:"pointer", fontFamily:"monospace" },
+  pdfBtn: { padding:"8px 16px", borderRadius:8, border:"1px solid rgba(59,130,246,0.25)", background:"rgba(59,130,246,0.08)", color:"#60a5fa", fontSize:13, cursor:"pointer", fontFamily:"monospace" },
   kpiStrip: { display:"flex", alignItems:"stretch", borderBottom:"1px solid rgba(255,255,255,0.05)", background:"rgba(255,255,255,0.01)", flexWrap:"wrap" },
-  kpi: { flex:1, padding:"20px 24px", minWidth:140, borderRight:"1px solid rgba(255,255,255,0.05)" },
-  kpiVal: { fontSize:"clamp(16px,2.5vw,22px)", fontWeight:800, color:"#f1f5f9", fontFamily:"monospace", marginBottom:3 },
+  kpi: { flex:1, padding:"20px 24px", minWidth:130, borderRight:"1px solid rgba(255,255,255,0.05)" },
+  kpiVal: { fontSize:"clamp(14px,2vw,20px)", fontWeight:800, color:"#f1f5f9", fontFamily:"monospace", marginBottom:3 },
   kpiSub: { fontSize:11, color:"#334155", marginBottom:4 },
   kpiLabel: { fontSize:10, color:"#475569", textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"monospace" },
   tabRow: { display:"flex", gap:2, padding:"14px 32px 0", borderBottom:"1px solid rgba(255,255,255,0.06)", flexWrap:"wrap" },
   tab: { padding:"9px 18px", borderRadius:"8px 8px 0 0", border:"none", background:"transparent", color:"#475569", fontSize:13, cursor:"pointer" },
   tabOn: { background:"rgba(16,185,129,0.08)", color:"#34d399", borderBottom:"2px solid #10b981" },
-  content: { padding:"24px 32px 60px", maxWidth:1280 },
+  content: { padding:"24px 32px 60px", maxWidth:1400 },
   loading: { textAlign:"center", color:"#475569", padding:80, fontFamily:"monospace" },
   row2: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, marginBottom:20 },
   card: { background:"rgba(255,255,255,0.025)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:16, padding:"22px 22px 18px", marginBottom:20 },
@@ -433,11 +633,9 @@ const D = {
   legendVal: { color:"#f1f5f9", fontFamily:"monospace", fontWeight:600 },
   statusGrid: { display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(170px,1fr))", gap:12 },
   statusCard: { padding:"16px 14px", borderRadius:12, border:"1px solid" },
-  statusOn: { background:"rgba(16,185,129,0.07)", borderColor:"rgba(16,185,129,0.2)" },
-  statusOff: { background:"rgba(255,255,255,0.02)", borderColor:"rgba(255,255,255,0.06)" },
   statusDot: { width:8, height:8, borderRadius:"50%", marginBottom:10 },
   statusName: { fontSize:13, color:"#94a3b8", marginBottom:6, fontWeight:500 },
-  statusRev: { fontSize:15, fontFamily:"monospace", color:"#34d399", fontWeight:700 },
+  statusRev: { fontSize:15, fontFamily:"monospace", fontWeight:700 },
   table: { width:"100%", borderCollapse:"collapse", fontSize:13 },
   th: { padding:"9px 12px", textAlign:"left", fontSize:10, color:"#475569", fontFamily:"monospace", textTransform:"uppercase", letterSpacing:"0.08em", borderBottom:"1px solid rgba(255,255,255,0.08)", whiteSpace:"nowrap" },
   td: { padding:"9px 12px", color:"#cbd5e1", borderBottom:"1px solid rgba(255,255,255,0.04)", verticalAlign:"middle" },
