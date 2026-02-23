@@ -169,7 +169,7 @@ The email should: open with a warm professional greeting, lead with headline num
     <div style={D.page}>
       <div style={D.header}>
         <div>
-          <div style={D.eyebrow}>CEO Dashboard · Pharmacy Group</div>
+          <div style={D.eyebrow}>Dashboard · Pharmacy Group</div>
           <h1 style={D.title}>Weekly Performance <span style={D.green}>Report</span></h1>
         </div>
         <div style={D.headerRight}>
