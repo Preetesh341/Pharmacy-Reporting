@@ -97,6 +97,9 @@ export default function CEODashboard() {
   const [historyData, setHistoryData] = useState([]);
   const [monthlyData, setMonthlyData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [passwordError, setPasswordError] = useState(false);
   const [tab, setTab] = useState("overview");
   const [emailDraft, setEmailDraft] = useState("");
   const [emailCopied, setEmailCopied] = useState(false);
@@ -163,6 +166,16 @@ export default function CEODashboard() {
     setMonthlyData(Object.values(monthMap).sort((a,b) => a.month.localeCompare(b.month)));
 
     setLoading(false);
+  }
+
+  function handlePassword() {
+    if (passwordInput === "PharmacyLink") {
+      setAuthenticated(true);
+      setPasswordError(false);
+    } else {
+      setPasswordError(true);
+      setPasswordInput("");
+    }
   }
 
   const submitted = Object.keys(reports).length;
@@ -244,6 +257,50 @@ export default function CEODashboard() {
   }
 
   const TABS = ["overview","trends","services","pharmacies","submissions","email"];
+
+  if (!authenticated) {
+    return (
+      <div style={D.page}>
+        <div style={D.header}>
+          <div>
+            <div style={D.eyebrow}>Dashboard · Pharmacy Group</div>
+            <h1 style={D.title}>Weekly Performance <span style={D.green}>Report</span></h1>
+          </div>
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"70vh", padding:40 }}>
+          <div style={{ maxWidth:380, width:"100%" }}>
+            <div style={{ textAlign:"center", marginBottom:32 }}>
+              <div style={{ width:64, height:64, borderRadius:"50%", border:"2px solid #10b981", background:"rgba(16,185,129,0.1)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, margin:"0 auto 16px" }}>🔒</div>
+              <div style={{ fontSize:20, fontWeight:700, color:"#f1f5f9", marginBottom:8 }}>Access Required</div>
+              <div style={{ fontSize:13, color:"#64748b" }}>Enter your password to view the dashboard</div>
+            </div>
+            <div style={{ fontSize:11, color:"#64748b", fontFamily:"monospace", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:8 }}>Password</div>
+            <input
+              type="password"
+              placeholder="Enter password"
+              value={passwordInput}
+              onChange={e => { setPasswordInput(e.target.value); setPasswordError(false); }}
+              onKeyDown={e => e.key === "Enter" && handlePassword()}
+              style={{ width:"100%", padding:"12px 16px", borderRadius:10, border:`1px solid ${passwordError ? "#f87171" : "rgba(255,255,255,0.1)"}`, background:"rgba(255,255,255,0.05)", color:"#f1f5f9", fontSize:15, outline:"none", boxSizing:"border-box", marginBottom: passwordError ? 8 : 16, fontFamily:"monospace" }}
+              autoFocus
+            />
+            {passwordError && (
+              <div style={{ color:"#f87171", fontSize:13, marginBottom:12, textAlign:"center" }}>
+                Incorrect password — please try again
+              </div>
+            )}
+            <button
+              onClick={handlePassword}
+              disabled={!passwordInput}
+              style={{ width:"100%", padding:"14px", borderRadius:10, border:"none", background: passwordInput ? "linear-gradient(135deg,#10b981,#059669)" : "rgba(255,255,255,0.06)", color: passwordInput ? "#fff" : "#475569", fontSize:15, fontWeight:700, cursor: passwordInput ? "pointer" : "not-allowed", boxShadow: passwordInput ? "0 4px 20px rgba(16,185,129,0.3)" : "none" }}
+            >
+              Access Dashboard →
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={D.page}>
