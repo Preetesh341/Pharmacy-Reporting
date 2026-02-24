@@ -249,8 +249,8 @@ export default function PharmacyEntry() {
           <span style={S.topWeek}>Week of {formatWeekDisplay(week)}</span>
         </div>
         <div style={S.heroSection}>
-          <div style={S.heroBadge}>Weekly Service Report</div>
-          <h1 style={S.heroTitle}>Good morning 👋</h1>
+          <div style={S.heroBadge}> Pharmacy Link Group Weekly Service Report</div>
+          <h1 style={S.heroTitle}>Good Morning Managers 👋</h1>
           <p style={S.heroSub}>Select your pharmacy and complete this week's service log</p>
         </div>
         <div style={S.card}>
