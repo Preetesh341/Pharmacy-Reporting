@@ -10,8 +10,8 @@ const PHARMACIES = [
   "Popley Pharmacy",
   "Direct Pharmacy",
   "Dapdune Pharmacy",
-  "Winklebury Pharmacy",
   "East Wittering Pharmacy",
+  "Winklebury Pharmacy",
 ];
 
 const SERVICES = [
@@ -31,6 +31,7 @@ const SERVICES = [
   { id: "ear_both", label: "Ear Microsuction – Both Ears", fee: 70.00, category: "Private Clinics" },
   { id: "cpcs_ums", label: "CPCS – UMS", fee: 15.00, category: "CPCS" },
   { id: "cpcs_mi", label: "CPCS – MI", fee: 17.00, category: "CPCS" },
+  { id: "pharmacy_first", label: "Pharmacy First – Clinical Pathways", fee: 17.00, category: "CPCS" },
 ];
 
 const CAT_COLORS = { "NHS Clinical": "#10b981", "Vaccinations": "#3b82f6", "Private Clinics": "#f59e0b", "CPCS": "#8b5cf6" };
@@ -568,36 +569,61 @@ export default function CEODashboard() {
             <div style={{ overflowX:"auto" }}>
               <table style={D.table}>
                 <thead><tr>
-                  <th style={{ ...D.th, minWidth:160 }}>Service</th>
-                  {PHARMACIES.map(p => <th key={p} style={{ ...D.th, textAlign:"right", fontSize:10, whiteSpace:"nowrap" }}>{p.replace(" Pharmacy","")}</th>)}
-                  <th style={{ ...D.th, textAlign:"right" }}>Total</th>
+                  <th style={{ ...D.th, minWidth:240, textAlign:"left" }}>Service</th>
+                  {PHARMACIES.map(p => <th key={p} style={{ ...D.th, textAlign:"center", fontSize:11, whiteSpace:"nowrap", color:"#f1f5f9" }}>{p.replace(" Pharmacy","")}</th>)}
+                  <th style={{ ...D.th, textAlign:"center", color:"#f1f5f9" }}>Total</th>
                 </tr></thead>
                 <tbody>
                   {SERVICES.map((svc,i) => (
                     <tr key={svc.id} style={{ background: i%2===0?"transparent":"rgba(255,255,255,0.015)" }}>
-                      <td style={{ ...D.td, fontSize:12 }}>{svc.label}</td>
+                      <td style={{ ...D.td, fontSize:12, textAlign:"left" }}>
+                        <span style={{ color:"#f1f5f9", fontWeight:500 }}>{svc.label}</span>
+                        <span style={{ color:"#a78bfa", fontSize:11, fontFamily:"monospace", marginLeft:5 }}>
+                          {svc.fee !== null ? `(£${svc.fee.toFixed(2)})` : "(Variable)"}
+                        </span>
+                      </td>
                       {PHARMACIES.map(p => {
                         const rev = calcRevenue(svc, reports[p]);
-                        return <td key={p} style={{ ...D.td, textAlign:"right", fontFamily:"monospace", fontSize:11, color:rev>0?"#34d399":"#1e3a2f" }}>
-                          {reports[p]?(rev>0?fmt(rev):"—"):<span style={{ color:"#1a2e20" }}>N/S</span>}
-                        </td>;
+                        const count = svc.fee !== null ? (reports[p]?.counts?.[svc.id] || 0) : null;
+                        return (
+                          <td key={p} style={{ ...D.td, textAlign:"center", fontFamily:"monospace", fontSize:11 }}>
+                            {reports[p] ? (
+                              rev > 0 ? (
+                                <span>
+                                  <span style={{ display:"block", color:"#34d399", fontWeight:600 }}>{fmt(rev)}</span>
+                                  {count !== null && count > 0 && (
+                                    <span style={{ display:"block", color:"#94a3b8", fontSize:10, marginTop:3 }}>{count} consultation(s)</span>
+                                  )}
+                                </span>
+                              ) : (
+                                <span style={{ color:"#f1f5f9", fontWeight:700 }}>—</span>
+                              )
+                            ) : (
+                              <span style={{ color:"#334155" }}>N/S</span>
+                            )}
+                          </td>
+                        );
                       })}
-                      <td style={{ ...D.td, textAlign:"right", fontFamily:"monospace", fontSize:12, color:"#a78bfa", fontWeight:600 }}>
-                        {fmt(PHARMACIES.reduce((a,p)=>a+calcRevenue(svc,reports[p]),0))}
+                      <td style={{ ...D.td, textAlign:"center", fontFamily:"monospace", fontSize:12, color:"#a78bfa", fontWeight:700 }}>
+                        <span style={{ display:"block" }}>{fmt(PHARMACIES.reduce((a,p)=>a+calcRevenue(svc,reports[p]),0))}</span>
+                        {svc.fee !== null && (() => {
+                          const totalCount = PHARMACIES.reduce((a,p) => a + (reports[p]?.counts?.[svc.id] || 0), 0);
+                          return totalCount > 0 ? <span style={{ display:"block", color:"#7c3aed", fontSize:10, marginTop:3, opacity:0.8 }}>{totalCount} consultation(s)</span> : null;
+                        })()}
                       </td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot><tr style={{ borderTop:"2px solid rgba(255,255,255,0.1)" }}>
-                  <td style={{ ...D.td, fontWeight:700, color:"#f1f5f9" }}>Site Total</td>
-                  {PHARMACIES.map(p => <td key={p} style={{ ...D.td, textAlign:"right", fontFamily:"monospace", fontWeight:700, fontSize:12, color:reports[p]?"#34d399":"#334155" }}>
+                  <td style={{ ...D.td, fontWeight:700, color:"#f1f5f9", textAlign:"left" }}>Site Total</td>
+                  {PHARMACIES.map(p => <td key={p} style={{ ...D.td, textAlign:"center", fontFamily:"monospace", fontWeight:700, fontSize:12, color:reports[p]?"#34d399":"#334155" }}>
                     {reports[p]?fmt(reports[p].total_revenue||0):"N/S"}
                   </td>)}
-                  <td style={{ ...D.td, textAlign:"right", fontFamily:"monospace", fontWeight:700, color:"#34d399" }}>{fmt(totalRev)}</td>
+                  <td style={{ ...D.td, textAlign:"center", fontFamily:"monospace", fontWeight:700, color:"#34d399" }}>{fmt(totalRev)}</td>
                 </tr></tfoot>
               </table>
             </div>
-            <p style={{ color:"#334155", fontSize:11, marginTop:10, fontFamily:"monospace" }}>N/S = not yet submitted</p>
+            <p style={{ color:"#475569", fontSize:11, marginTop:10, fontFamily:"monospace" }}>N/S = not yet submitted &nbsp;·&nbsp; — = submitted but nil this service</p>
           </div>
         )}
 
