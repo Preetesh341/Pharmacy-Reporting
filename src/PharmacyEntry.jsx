@@ -6,8 +6,8 @@ const PHARMACIES = [
   "Popley Pharmacy",
   "Direct Pharmacy",
   "Dapdune Pharmacy",
-  "Winklebury Pharmacy",
   "East Wittering Pharmacy",
+  "Winklebury Pharmacy",
 ];
 
 const SERVICES = [
@@ -27,6 +27,7 @@ const SERVICES = [
   { id: "ear_both", label: "Ear Microsuction – Both Ears", fee: 70.00, category: "Private Clinics" },
   { id: "cpcs_ums", label: "CPCS – UMS", fee: 15.00, category: "CPCS" },
   { id: "cpcs_mi", label: "CPCS – MI", fee: 17.00, category: "CPCS" },
+  { id: "pharmacy_first", label: "Pharmacy First – Clinical Pathways", fee: 17.00, category: "CPCS" },
 ];
 
 const CATEGORIES = [...new Set(SERVICES.map(s => s.category))];
@@ -249,8 +250,8 @@ export default function PharmacyEntry() {
           <span style={S.topWeek}>Week of {formatWeekDisplay(week)}</span>
         </div>
         <div style={S.heroSection}>
-          <div style={S.heroBadge}> Pharmacy Link Group Weekly Service Report</div>
-          <h1 style={S.heroTitle}>Good Morning Managers 👋</h1>
+          <div style={S.heroBadge}>Weekly Service Report</div>
+          <h1 style={S.heroTitle}>Good morning 👋</h1>
           <p style={S.heroSub}>Select your pharmacy and complete this week's service log</p>
         </div>
         <div style={S.card}>
