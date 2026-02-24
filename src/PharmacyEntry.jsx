@@ -64,7 +64,9 @@ export default function PharmacyEntry() {
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [alreadySubmitted, setAlreadySubmitted] = useState(false);
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(0);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [passwordError, setPasswordError] = useState(false);
   const [expandedCats, setExpandedCats] = useState({});
 
   useEffect(() => {
@@ -135,6 +137,16 @@ export default function PharmacyEntry() {
     setExpandedCats(prev => ({ ...prev, [cat]: !prev[cat] }));
   }
 
+  function handlePassword() {
+    if (passwordInput === "PharmacyLink") {
+      setStep(1);
+      setPasswordError(false);
+    } else {
+      setPasswordError(true);
+      setPasswordInput("");
+    }
+  }
+
   async function handleSubmit() {
     if (!pharmacy) return;
     setLoading(true);
@@ -184,6 +196,45 @@ export default function PharmacyEntry() {
           </div>
           <button style={S.ghostBtn} onClick={() => { setSubmitted(false); setStep(1); setPharmacy(""); }}>
             ← Submit Another Pharmacy
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 0) {
+    return (
+      <div style={S.page}>
+        <div style={S.topBar}>
+          <span style={S.brand}>⚕ Pharmacy Group</span>
+        </div>
+        <div style={S.heroSection}>
+          <div style={S.heroBadge}>Weekly Service Report</div>
+          <h1 style={S.heroTitle}>Welcome 👋</h1>
+          <p style={S.heroSub}>Enter your access password to continue</p>
+        </div>
+        <div style={{ maxWidth:400, margin:"0 auto", padding:"0 20px" }}>
+          <div style={S.cardLabel}>Password</div>
+          <input
+            type="password"
+            placeholder="Enter password"
+            value={passwordInput}
+            onChange={e => { setPasswordInput(e.target.value); setPasswordError(false); }}
+            onKeyDown={e => e.key === "Enter" && handlePassword()}
+            style={{ ...S.dateInput, marginBottom: passwordError ? 8 : 20, borderColor: passwordError ? "#f87171" : "rgba(255,255,255,0.1)" }}
+            autoFocus
+          />
+          {passwordError && (
+            <div style={{ color:"#f87171", fontSize:13, marginBottom:16, textAlign:"center" }}>
+              Incorrect password — please try again
+            </div>
+          )}
+          <button
+            style={{ ...S.primaryBtn, ...(passwordInput ? {} : S.primaryBtnOff) }}
+            disabled={!passwordInput}
+            onClick={handlePassword}
+          >
+            Continue →
           </button>
         </div>
       </div>
